@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE="command-code-image:latest"
+NPM_VOLUME="commandcode-global-modules"
+CONTAINER_HOME="/home/node"
+
+# Parse required --user <name>; consumed here, NOT forwarded to the container
+USER_ARG=""
+REMAIN=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --user)
+      if [ $# -lt 2 ]; then
+        echo "error: --user requires a value" >&2
+        exit 1
+      fi
+      USER_ARG="$2"; shift 2 ;;
+    --user=*)
+      USER_ARG="${1#--user=}"; shift ;;
+    --)
+      REMAIN+=("$@"); break ;;
+    *)
+      REMAIN+=("$1"); shift ;;
+  esac
+done
+
+if [ -z "$USER_ARG" ]; then
+  echo "error: missing required argument --user <name>" >&2
+  echo "usage: cmdc --user <name> [args...]" >&2
+  exit 1
+fi
+
+# Reject values that would escape/break ~/.commandcode/<user>
+case "$USER_ARG" in
+  -*|*/*|.|..)
+    echo "error: invalid --user value: '$USER_ARG'" >&2
+    exit 1 ;;
+esac
+
+# Restore remaining args as "$@" (safe even when empty under set -u / bash 3.2)
+set -- "${REMAIN[@]+"${REMAIN[@]}"}"
+
+AUTH_DIR="$HOME/.commandcode/$USER_ARG"
+
+# 1. Ensure the npm-global volume exists (persists across `cmd update` / npm updates)
+docker volume inspect "$NPM_VOLUME" >/dev/null 2>&1 || docker volume create "$NPM_VOLUME" >/dev/null
+
+# 2. Ensure host auth dir exists before mounting (per docs: auth.json lives here)
+mkdir -p "$AUTH_DIR"
+
+# 3. Only allocate a TTY if we actually have one
+TTY_FLAGS="-i"
+if [ -t 1 ]; then
+  TTY_FLAGS="-it"
+fi
+
+exec docker run --rm $TTY_FLAGS \
+  --init \
+  -v "$NPM_VOLUME:/opt/npm-global" \
+  -v "$AUTH_DIR:$CONTAINER_HOME/.commandcode" \
+  -v "$PWD:/work" \
+  -w /work \
+  -e TERM="${TERM:-xterm-256color}" \
+  -e COLORTERM="${COLORTERM:-}" \
+  -e CMD_ZDR=1 \
+  "$IMAGE" --trust "$@"

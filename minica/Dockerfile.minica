@@ -1,0 +1,26 @@
+ARG GO_VERSION=1.27.1
+ARG MINICA_VERSION=v1.1.0
+
+# STAGE 1: build the minica binary
+FROM golang:${GO_VERSION}-alpine3.24 AS build
+
+# Re-declare to inherit the global ARG into this stage
+ARG MINICA_VERSION
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go install \
+    -ldflags="-s -w" \
+    -trimpath \
+    github.com/jsha/minica@${MINICA_VERSION}
+
+# STAGE 2: scratch — binary only
+FROM scratch AS final
+
+COPY --from=build /go/bin/minica /minica
+
+WORKDIR /usr/src/app
+
+USER 10000:10000
+
+ENTRYPOINT ["/minica"]

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE="gocheck-image:latest"
+GOCACHE_VOLUME="gocheck-gocache"
+GOMODCACHE_VOLUME="gocheck-gomodcache"
+
+# Resolve the directory this script lives in (fallback for rebuild context)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# --- Subcommand: rebuild ---------------------------------------------------
+# Rebuilds the Docker image from scratch (--no-cache). Useful after bumping
+# tool versions in the Dockerfile.
+# Usage: gocheck rebuild [path-to-build-context]
+#   If no path given, uses the script's own directory (if Dockerfile exists).
+if [ "${1:-}" = "rebuild" ]; then
+  shift
+  BUILD_CONTEXT="${1:-$SCRIPT_DIR}"
+  if [ ! -f "$BUILD_CONTEXT/Dockerfile" ]; then
+    echo "gocheck: no Dockerfile found in '$BUILD_CONTEXT'" >&2
+    echo "gocheck: usage: gocheck rebuild [path-to-gocheck-directory]" >&2
+    exit 1
+  fi
+  echo "gocheck: rebuilding image from $BUILD_CONTEXT (no cache) ..." >&2
+  docker build --no-cache -t "$IMAGE" "$BUILD_CONTEXT"
+  exit 0
+fi
+
+# --- Ensure Go cache volumes exist (persist across runs for speed) ---------
+docker volume inspect "$GOCACHE_VOLUME" >/dev/null 2>&1 || docker volume create "$GOCACHE_VOLUME" >/dev/null
+docker volume inspect "$GOMODCACHE_VOLUME" >/dev/null 2>&1 || docker volume create "$GOMODCACHE_VOLUME" >/dev/null
+
+# --- Only allocate a TTY if we actually have one ---------------------------
+TTY_FLAGS="-i"
+if [ -t 1 ]; then
+  TTY_FLAGS="-it"
+fi
+
+# --- Run the tool inside the container with the current dir mounted --------
+exec docker run --rm $TTY_FLAGS \
+  --init \
+  -v "$GOCACHE_VOLUME:/root/.cache/go-build" \
+  -v "$GOMODCACHE_VOLUME:/go/pkg/mod" \
+  -v "$PWD:/work" \
+  -w /work \
+  -e TERM="${TERM:-xterm-256color}" \
+  -e COLORTERM="${COLORTERM:-}" \
+  "$IMAGE" "$@"

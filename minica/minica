@@ -1,0 +1,6 @@
+#!/bin/sh
+mkdir -p ~/.certs
+docker run --rm -it -v ".:/usr/src/app" --name minica minica:1.1.0 minica "$@"
+rsync -av --exclude="minica" --exclude="Dockerfile.minica" --exclude="build" --exclude="README.md" --exclude=".DS_Store" -exclude="" . ~/.certs
+rm minica.pem minica-key.pem
+find . -type d -not -path "." -exec rm -rf {} \; 2>/dev/null
